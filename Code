@@ -1,0 +1,114 @@
+import requests
+from bs4 import BeautifulSoup
+import os
+import nltk
+from nltk.tokenize import word_tokenize, sent_tokenize
+import pandas as pd
+
+nltk.download('punkt')
+
+# Read positive and negative words
+with open('C:/Users/rishi/Downloads/positive-words.txt', 'r') as file:
+    positive_words = file.read().splitlines()
+
+with open('C:/Users/rishi/Downloads/negative-words.txt', 'r') as file:
+    negative_words = file.read().splitlines()
+
+# Read stopwords from the StopWords folder
+stopwords = set()
+stopwords_dir = 'C:/Users/rishi/Downloads/StopWords-20240708T124113Z-001/StopWords'
+for filename in os.listdir(stopwords_dir):
+    with open(os.path.join(stopwords_dir, filename), 'r') as file:
+        stopwords.update(file.read().splitlines())
+
+def extract_article_text(url):
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+    
+    # Extract the title
+    title = soup.find('h1').text if soup.find('h1') else 'No Title'
+    
+    # Extract the article text
+    article_text = ' '.join([p.text for p in soup.find_all('p')])
+    
+    return title, article_text
+
+def calculate_scores(text):
+    words = word_tokenize(text)
+    sentences = sent_tokenize(text)
+    
+    # Filter out stopwords
+    words = [word for word in words if word.lower() not in stopwords]
+    
+    positive_score = sum(1 for word in words if word in positive_words)
+    negative_score = sum(1 for word in words if word in negative_words)
+    polarity_score = (positive_score - negative_score) / ((positive_score + negative_score) + 0.000001)
+    subjectivity_score = (positive_score + negative_score) / (len(words) + 0.000001)
+    
+    avg_sentence_length = len(words) / len(sentences)
+    complex_words_count = sum(1 for word in words if len(word) > 2)
+    percentage_complex_words = complex_words_count / len(words)
+    fog_index = 0.4 * (avg_sentence_length + percentage_complex_words)
+    
+    avg_words_per_sentence = len(words) / len(sentences)
+    syllable_count = sum(len([ch for ch in word if ch in 'aeiou']) for word in words)
+    avg_syllables_per_word = syllable_count / len(words)
+    
+    personal_pronouns = sum(1 for word in words if word.lower() in ['i', 'we', 'my', 'ours', 'us'])
+    avg_word_length = sum(len(word) for word in words) / len(words)
+    
+    return {
+        'POSITIVE SCORE': positive_score,
+        'NEGATIVE SCORE': negative_score,
+        'POLARITY SCORE': polarity_score,
+        'SUBJECTIVITY SCORE': subjectivity_score,
+        'AVG SENTENCE LENGTH': avg_sentence_length,
+        'PERCENTAGE OF COMPLEX WORDS': percentage_complex_words,
+        'FOG INDEX': fog_index,
+        'AVG NUMBER OF WORDS PER SENTENCE': avg_words_per_sentence,
+        'COMPLEX WORD COUNT': complex_words_count,
+        'WORD COUNT': len(words),
+        'SYLLABLE PER WORD': avg_syllables_per_word,
+        'PERSONAL PRONOUNS': personal_pronouns,
+        'AVG WORD LENGTH': avg_word_length
+    }
+
+# Read the input file
+input_file_path = 'C:/Users/rishi/Downloads/Input.xlsx'
+output_file_path = 'C:/Users/rishi/Downloads/Output Data Structure.xlsx'
+
+input_df = pd.read_excel(input_file_path)
+output_df = pd.read_excel(output_file_path)
+
+# Process each URL and perform text analysis
+results = []
+for index, row in input_df.iterrows():
+    url_id = row['URL_ID']
+    url = row['URL']
+    
+    print(f'Processing URL_ID: {url_id} URL: {url}')
+    
+    # Extract article text
+    title, article_text = extract_article_text(url)
+    
+    # Save the extracted article text to a file
+    with open(f'{url_id}.txt', 'w', encoding='utf-8') as file:
+        file.write(f'Title: {title}\n\n')
+        file.write(article_text)
+    
+    # Perform text analysis
+    scores = calculate_scores(article_text)
+    
+    # Add URL_ID to the scores
+    scores['URL_ID'] = url_id
+    
+    results.append(scores)
+
+# Create a DataFrame from the results
+results_df = pd.DataFrame(results)
+
+# Merge with the output structure DataFrame
+final_df = output_df.merge(results_df, on='URL_ID', how='left')
+
+# Save the final results to the output file
+final_df.to_excel(output_file_path, index=False)
